@@ -15,3 +15,15 @@ button{font:inherit;cursor:pointer}.primary{width:100%;border:0;border-radius:12
 .answers{display:grid;gap:10px}.answer{width:100%;min-height:57px;text-align:left;padding:12px 14px;border:1px solid #2b3850;border-radius:12px;background:#111a2c;color:#edf0f5;font-size:12px;display:flex;align-items:center;gap:12px}.answer:disabled{opacity:.6}.letter{width:29px;height:29px;flex:none;border:1px solid #526079;border-radius:8px;display:grid;place-items:center;color:var(--gold);font-size:10px;font-weight:800}.hint{text-align:center;color:#68758b;font-size:8px;letter-spacing:1.5px;margin-top:21px}
 .result{text-align:center;padding-top:25px}.star{font-size:35px;color:var(--gold);margin-bottom:18px}.result h1{font-size:37px}.result-score{margin:30px 0 8px}.result-score b{font-size:82px;letter-spacing:-5px;color:var(--gold2)}.result-score span{font-size:22px;color:var(--muted)}.best-line{font-size:9px;letter-spacing:1.3px;color:var(--muted);margin:24px 0}.best-line b{color:var(--gold2);font-size:15px;margin-left:6px}.secondary{width:100%;padding:15px;margin-top:10px;border:1px solid #35415a;border-radius:12px;background:transparent;color:#b7bfce;font-size:10px;font-weight:800;letter-spacing:1.5px}.error{margin-top:16px;padding:12px;border:1px solid #9b4b4b;background:#421f2a;color:#ffdada;border-radius:10px;font-size:12px}.hidden{display:none}
 @media(max-height:740px){.brand{margin-bottom:24px}.number{font-size:68px}.number-wrap{margin:18px 0}.game h2{font-size:19px;min-height:70px}.answer{min-height:50px}}
+
+/* Подсвечиваем только правильный ответ. */
+.answer.correct-answer{background:#123d2d;border-color:#36b879;color:#eafff3;opacity:1;box-shadow:0 0 0 1px #36b87955 inset}
+.answer.correct-answer .letter{background:#1d704b;border-color:#49d18b;color:#ffffff}
+.answer:disabled:not(.correct-answer){opacity:.72}
+/* Медали лидеров */
+.leader-row.rank-1{background:linear-gradient(90deg,#8c6b22aa,transparent);border-radius:7px;color:#ffe7a0;padding-left:8px;padding-right:8px}
+.leader-row.rank-1 .rank,.leader-row.rank-1 .leader-score{color:#ffd45c}
+.leader-row.rank-2{background:linear-gradient(90deg,#68717faa,transparent);border-radius:7px;padding-left:8px;padding-right:8px}
+.leader-row.rank-2 .rank,.leader-row.rank-2 .leader-score{color:#dce3ed}
+.leader-row.rank-3{background:linear-gradient(90deg,#81502aaa,transparent);border-radius:7px;padding-left:8px;padding-right:8px}
+.leader-row.rank-3 .rank,.leader-row.rank-3 .leader-score{color:#e7a36c}
