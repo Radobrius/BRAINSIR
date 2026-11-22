@@ -29,6 +29,17 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "15 секунд на каждый. Ошибка или тайм-аут завершают игру. Нажми /start."
     )
 
+@web.middleware
+async def no_cache_middleware(request, handler):
+    response = await handler(request)
+    # Telegram WebView may keep the old Mini App page and its assets in cache.
+    # Always revalidate the page and static files after a Railway deployment.
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+
 async def main():
     await init_db()
     bot_app = Application.builder().token(BOT_TOKEN).build()
@@ -40,7 +51,7 @@ async def main():
     await update_channel_post()
     await bot_app.updater.start_polling(drop_pending_updates=True)
 
-    site_app = web.Application()
+    site_app = web.Application(middlewares=[no_cache_middleware])
     site_app.router.add_get("/", lambda r: web.FileResponse("static/index.html"))
     site_app.router.add_get("/health", lambda r: web.json_response({"ok": True, "app": "BRAINSIR"}))
     site_app.router.add_post("/api/start", api_start)

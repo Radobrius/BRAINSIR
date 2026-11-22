@@ -71,6 +71,8 @@ QUESTIONS = [
 
 QUESTIONS.extend(QUESTION_ADDITIONS)
 TOTAL_QUESTIONS = 500
+if len(QUESTIONS) != TOTAL_QUESTIONS:
+    raise RuntimeError(f"В банке должно быть {TOTAL_QUESTIONS} вопросов, найдено {len(QUESTIONS)}")
 CHANNEL_BOT = None
 CHANNEL_WEBAPP_URL = None
 CHANNEL_ID = None
