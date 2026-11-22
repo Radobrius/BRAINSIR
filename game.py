@@ -8,6 +8,8 @@ import time
 import uuid
 from urllib.parse import parse_qsl
 from aiohttp import web
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from question_bank import QUESTION_ADDITIONS
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 DB_PATH = os.environ.get("DATABASE_PATH", "brainsir.db")
@@ -66,6 +68,57 @@ QUESTIONS = [
 ("Сколько дней в високосном году?", ["365","366","367","364"], 1,"Математика"),
 ]
 
+
+QUESTIONS.extend(QUESTION_ADDITIONS)
+TOTAL_QUESTIONS = 500
+CHANNEL_BOT = None
+CHANNEL_WEBAPP_URL = None
+CHANNEL_ID = None
+BOT_USERNAME = os.environ.get("BOT_USERNAME", "Brainsir_bot")
+
+def configure_channel(bot, webapp_url, channel_id):
+    global CHANNEL_BOT, CHANNEL_WEBAPP_URL, CHANNEL_ID
+    CHANNEL_BOT = bot
+    CHANNEL_WEBAPP_URL = webapp_url.rstrip("/")
+    CHANNEL_ID = channel_id
+
+def channel_text(player_count):
+    return (
+        "<b>🧠 BRAINSIR — ИНТЕЛЛЕКТУАЛЬНАЯ ИГРА</b>\n\n"
+        "500 вопросов. 15 секунд на каждый. Одна ошибка — и игра окончена.\n\n"
+        "Проверь свою эрудицию и попробуй попасть в ТОП-10!\n\n"
+        f"<b>👥 Всего игроков: {player_count:,}</b>".replace(",", " ")
+    )
+
+async def update_channel_post():
+    if CHANNEL_BOT is None or not CHANNEL_ID:
+        return
+    try:
+        with connect() as c:
+            count = c.execute("SELECT COUNT(*) FROM players").fetchone()[0]
+            row = c.execute("SELECT value FROM app_settings WHERE key='channel_post_id'").fetchone()
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(
+            f"🎮 ИГРАТЬ", url=f"https://t.me/{BOT_USERNAME}?startapp")]])
+        text = channel_text(count)
+        if row:
+            try:
+                await CHANNEL_BOT.edit_message_text(
+                    chat_id=CHANNEL_ID, message_id=int(row["value"]),
+                    text=text, reply_markup=keyboard, parse_mode="HTML")
+                return
+            except Exception as exc:
+                if "message is not modified" in str(exc).lower():
+                    return
+        message = await CHANNEL_BOT.send_message(
+            chat_id=CHANNEL_ID, text=text, reply_markup=keyboard, parse_mode="HTML")
+        with connect() as c:
+            c.execute("INSERT INTO app_settings(key,value) VALUES('channel_post_id',?) "
+                      "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(message.message_id),))
+            c.commit()
+    except Exception as exc:
+        import logging
+        logging.getLogger("brainsir").warning("Не удалось обновить пост канала: %s", exc)
+
 def connect():
     c = sqlite3.connect(DB_PATH)
     c.row_factory = sqlite3.Row
@@ -76,10 +129,19 @@ async def init_db():
         c.execute("""CREATE TABLE IF NOT EXISTS players(
             user_id INTEGER PRIMARY KEY, username TEXT, first_name TEXT,
             best_score INTEGER NOT NULL DEFAULT 0, games INTEGER NOT NULL DEFAULT 0)""")
+        c.execute("CREATE TABLE IF NOT EXISTS app_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         c.execute("""CREATE TABLE IF NOT EXISTS sessions(
             session_id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, questions_json TEXT NOT NULL,
             position INTEGER NOT NULL, score INTEGER NOT NULL, status TEXT NOT NULL,
             question_started REAL NOT NULL, created_at REAL NOT NULL)""")
+        # Старые рекорды были из 50 вопросов. Переводим их в шкалу из 500,
+        # сохраняя прежнее соотношение результатов, и выполняем это только один раз.
+        migrated = c.execute("SELECT value FROM app_settings WHERE key='score_scale_v2'").fetchone()
+        if not migrated:
+            c.execute("UPDATE players SET best_score=best_score*10")
+            c.execute("INSERT INTO app_settings(key,value) VALUES('score_scale_v2','1')")
+        # Старые незавершённые партии содержали только 50 вопросов.
+        c.execute("UPDATE sessions SET status='interrupted' WHERE status='playing'")
         c.commit()
 
 def telegram_user(request):
@@ -107,7 +169,7 @@ def require_user(request):
     return user
 
 def view(q, pos, score):
-    return {"position":pos+1,"total":50,"score":score,"topic":q["topic"],
+    return {"position":pos+1,"total":TOTAL_QUESTIONS,"score":score,"topic":q["topic"],
             "question":q["question"],"options":q["options"],"seconds":15}
 
 async def api_start(request):
@@ -115,7 +177,7 @@ async def api_start(request):
     ids = list(range(len(QUESTIONS)))
     random.shuffle(ids)
     chosen = []
-    for i in ids[:50]:
+    for i in ids[:TOTAL_QUESTIONS]:
         question, opts, correct, topic = QUESTIONS[i]
         order = list(range(4))
         random.shuffle(order)
@@ -123,12 +185,15 @@ async def api_start(request):
                        "correct":order.index(correct),"topic":topic})
     sid, now = uuid.uuid4().hex, time.time()
     with connect() as c:
-        c.execute("""INSERT INTO players(user_id,username,first_name) VALUES(?,?,?)
-        ON CONFLICT(user_id) DO UPDATE SET username=excluded.username,first_name=excluded.first_name""",
-        (int(user["id"]),user.get("username",""),user.get("first_name","Игрок")))
+        inserted = c.execute("INSERT OR IGNORE INTO players(user_id,username,first_name) VALUES(?,?,?)",
+            (int(user["id"]),user.get("username",""),user.get("first_name","Игрок"))).rowcount == 1
+        c.execute("UPDATE players SET username=?,first_name=? WHERE user_id=?",
+            (user.get("username",""),user.get("first_name","Игрок"),int(user["id"])))
         c.execute("INSERT INTO sessions VALUES(?,?,?,?,?,?,?,?)",
                   (sid,int(user["id"]),json.dumps(chosen,ensure_ascii=False),0,0,"playing",now,now))
         c.commit()
+    if inserted:
+        await update_channel_post()
     return web.json_response({"session_id":sid,"question":view(chosen[0],0,0)})
 
 async def api_answer(request):
@@ -136,6 +201,7 @@ async def api_answer(request):
     try:
         body = await request.json()
         sid, answer = str(body["session_id"]), int(body["answer"])
+        timed_out = bool(body.get("timeout", False))
     except Exception:
         raise web.HTTPBadRequest(text="Некорректный запрос")
     uid = int(user["id"])
@@ -145,24 +211,28 @@ async def api_answer(request):
             raise web.HTTPBadRequest(text="Игра уже завершена или не найдена")
         questions = json.loads(row["questions_json"])
         pos, score = row["position"], row["score"]
-        if time.time() - row["question_started"] > 15.5:
+        correct_index = questions[pos]["correct"]
+        if timed_out or time.time() - row["question_started"] > 15.5:
             status = "timeout"
-        elif answer == questions[pos]["correct"]:
+        elif answer == correct_index:
             score += 1
-            status = "won" if pos == 49 else "playing"
+            status = "won" if pos == TOTAL_QUESTIONS - 1 else "playing"
         else:
             status = "wrong"
         if status == "playing":
             pos += 1
+            # Даём клиенту время показать зелёный правильный ответ.
             c.execute("UPDATE sessions SET position=?,score=?,question_started=? WHERE session_id=?",
-                      (pos,score,time.time(),sid))
+                      (pos,score,time.time()+0.85,sid))
             c.commit()
-            return web.json_response({"status":"playing","question":view(questions[pos],pos,score)})
+            return web.json_response({"status":"playing","correct_index":correct_index,
+                                      "question":view(questions[pos],pos,score)})
         c.execute("UPDATE sessions SET score=?,status=? WHERE session_id=?",(score,status,sid))
         c.execute("UPDATE players SET games=games+1,best_score=MAX(best_score,?) WHERE user_id=?",(score,uid))
         best=c.execute("SELECT best_score FROM players WHERE user_id=?",(uid,)).fetchone()["best_score"]
         c.commit()
-        return web.json_response({"status":status,"score":score,"total":50,"best_score":best})
+        return web.json_response({"status":status,"correct_index":correct_index,
+                                  "score":score,"total":TOTAL_QUESTIONS,"best_score":best})
 
 async def api_me(request):
     user = require_user(request)
@@ -175,7 +245,7 @@ async def api_leaderboard(request):
     require_user(request)
     with connect() as c:
         rows=c.execute("SELECT username,first_name,best_score FROM players WHERE games>0 "
-                       "ORDER BY best_score DESC, games ASC LIMIT 5").fetchall()
+                       "ORDER BY best_score DESC, games ASC, user_id ASC LIMIT 10").fetchall()
     return web.json_response({"leaders":[{"rank":i+1,
         "name":("@"+r["username"]) if r["username"] else (r["first_name"] or "Игрок"),
         "score":r["best_score"]} for i,r in enumerate(rows)]})
