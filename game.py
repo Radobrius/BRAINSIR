@@ -136,12 +136,14 @@ async def init_db():
             session_id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, questions_json TEXT NOT NULL,
             position INTEGER NOT NULL, score INTEGER NOT NULL, status TEXT NOT NULL,
             question_started REAL NOT NULL, created_at REAL NOT NULL)""")
-        # Старые рекорды были из 50 вопросов. Переводим их в шкалу из 500,
-        # сохраняя прежнее соотношение результатов, и выполняем это только один раз.
-        migrated = c.execute("SELECT value FROM app_settings WHERE key='score_scale_v2'").fetchone()
-        if not migrated:
-            c.execute("UPDATE players SET best_score=best_score*10")
-            c.execute("INSERT INTO app_settings(key,value) VALUES('score_scale_v2','1')")
+        # Старые рекорды из 50-вопросной версии ранее ошибочно умножались на 10.
+        # Возвращаем исходные значения один раз: например, 500 -> 50.
+        # Это безопасно для текущей базы: после обновления никто ещё не играл новую игру.
+        scaled_v2 = c.execute("SELECT value FROM app_settings WHERE key='score_scale_v2'").fetchone()
+        corrected_v3 = c.execute("SELECT value FROM app_settings WHERE key='score_scale_v3_corrected'").fetchone()
+        if scaled_v2 and not corrected_v3:
+            c.execute("UPDATE players SET best_score=CAST(best_score / 10 AS INTEGER)")
+            c.execute("INSERT INTO app_settings(key,value) VALUES('score_scale_v3_corrected','1')")
         # Старые незавершённые партии содержали только 50 вопросов.
         c.execute("UPDATE sessions SET status='interrupted' WHERE status='playing'")
         c.commit()
