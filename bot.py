@@ -9,7 +9,13 @@ from game import init_db, api_start, api_answer, api_me, api_leaderboard, config
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("brainsir")
 BOT_TOKEN = os.environ["BOT_TOKEN"]
-WEBAPP_URL = os.environ["WEBAPP_URL"].rstrip("/")
+# Railway may occasionally pass an empty WEBAPP_URL despite a dashboard value.
+# Fall back to the known public Railway domain so Telegram never receives url="".
+WEBAPP_URL = (os.environ.get("WEBAPP_URL") or "").strip().rstrip("/")
+if not WEBAPP_URL:
+    WEBAPP_URL = "https://web-production-49488216.up.railway.app"
+if not WEBAPP_URL.startswith(("https://", "http://")):
+    raise RuntimeError("WEBAPP_URL must be a full http(s) URL")
 PORT = int(os.environ.get("PORT", "8080"))
 CHANNEL_ID = os.environ.get("CHANNEL_ID", "@brainsir")
 
@@ -46,6 +52,7 @@ async def main():
     bot_app.add_handler(CommandHandler("start", start))
     bot_app.add_handler(CommandHandler("help", help_cmd))
     await bot_app.initialize()
+    log.info("Mini App URL configured: %s", WEBAPP_URL)
     configure_channel(bot_app.bot, WEBAPP_URL, CHANNEL_ID)
     await bot_app.start()
     await update_channel_post()
