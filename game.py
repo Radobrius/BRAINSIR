@@ -195,9 +195,7 @@ async def api_start(request):
             (user.get("username",""),user.get("first_name","Игрок"),int(user["id"])))
         c.execute("INSERT INTO sessions VALUES(?,?,?,?,?,?,?,?)",
                   (sid,int(user["id"]),json.dumps(chosen,ensure_ascii=False),0,0,"playing",now,now))
-        c.commit()
-    if inserted:
-        await update_channel_post()
+        c.commit() 
     return web.json_response({"session_id":sid,"question":view(chosen[0],0,0)})
 
 async def api_answer(request):
