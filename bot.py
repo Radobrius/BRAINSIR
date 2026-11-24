@@ -1,28 +1,23 @@
-
 import asyncio
 import logging
 import os
 from aiohttp import web
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, Update
 from telegram.ext import Application, CommandHandler, ContextTypes
-from game import init_db, api_start, api_answer, api_me, api_leaderboard
+from game import init_db, api_start, api_answer, api_me, api_leaderboard, configure_channel, update_channel_post
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("brainsir")
-
 BOT_TOKEN = os.environ["BOT_TOKEN"]
-
 # Railway may occasionally pass an empty WEBAPP_URL despite a dashboard value.
-# Fall back to the known public Railway domain.
+# Fall back to the known public Railway domain so Telegram never receives url="".
 WEBAPP_URL = (os.environ.get("WEBAPP_URL") or "").strip().rstrip("/")
 if not WEBAPP_URL:
     WEBAPP_URL = "https://web-production-49488216.up.railway.app"
-
 if not WEBAPP_URL.startswith(("https://", "http://")):
     raise RuntimeError("WEBAPP_URL must be a full http(s) URL")
-
 PORT = int(os.environ.get("PORT", "8080"))
-
+CHANNEL_ID = os.environ.get("CHANNEL_ID", "@brainsir")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = update.effective_user.first_name or "игрок"
@@ -34,17 +29,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=keyboard
     )
 
-
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(
         "BRAINSIR — интеллектуальная игра: 500 вопросов, 4 варианта ответа, "
         "15 секунд на каждый. Ошибка или тайм-аут завершают игру. Нажми /start."
     )
 
-
 @web.middleware
 async def no_cache_middleware(request, handler):
     response = await handler(request)
+    # Telegram WebView may keep the old Mini App page and its assets in cache.
     # Always revalidate the page and static files after a Railway deployment.
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
@@ -54,15 +48,14 @@ async def no_cache_middleware(request, handler):
 
 async def main():
     await init_db()
-
     bot_app = Application.builder().token(BOT_TOKEN).build()
     bot_app.add_handler(CommandHandler("start", start))
     bot_app.add_handler(CommandHandler("help", help_cmd))
-
     await bot_app.initialize()
     log.info("Mini App URL configured: %s", WEBAPP_URL)
-
+    configure_channel(bot_app.bot, WEBAPP_URL, CHANNEL_ID)
     await bot_app.start()
+    await update_channel_post()
     await bot_app.updater.start_polling(drop_pending_updates=True)
 
     site_app = web.Application(middlewares=[no_cache_middleware])
@@ -73,13 +66,10 @@ async def main():
     site_app.router.add_post("/api/me", api_me)
     site_app.router.add_get("/api/leaderboard", api_leaderboard)
     site_app.router.add_static("/static/", "static")
-
     runner = web.AppRunner(site_app)
     await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", PORT).start()
-
     log.info("BRAINSIR запущен на порту %s", PORT)
-
     try:
         await asyncio.Event().wait()
     finally:
@@ -88,7 +78,5 @@ async def main():
         await bot_app.stop()
         await bot_app.shutdown()
 
-
 if __name__ == "__main__":
     asyncio.run(main())
-

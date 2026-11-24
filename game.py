@@ -195,7 +195,9 @@ async def api_start(request):
             (user.get("username",""),user.get("first_name","Игрок"),int(user["id"])))
         c.execute("INSERT INTO sessions VALUES(?,?,?,?,?,?,?,?)",
                   (sid,int(user["id"]),json.dumps(chosen,ensure_ascii=False),0,0,"playing",now,now))
-        c.commit() 
+        c.commit()
+    if inserted:
+        await update_channel_post()
     return web.json_response({"session_id":sid,"question":view(chosen[0],0,0)})
 
 async def api_answer(request):
@@ -246,20 +248,8 @@ async def api_me(request):
 async def api_leaderboard(request):
     require_user(request)
     with connect() as c:
-        total_players = c.execute(
-            "SELECT COUNT(*) FROM players"
-        ).fetchone()[0]
-
-        rows = c.execute(
-            "SELECT username,first_name,best_score FROM players WHERE games>0 "
-            "ORDER BY best_score DESC, games ASC, user_id ASC LIMIT 10"
-        ).fetchall()
-
-    return web.json_response({
-        "total_players": total_players,
-        "leaders": [{
-            "rank": i + 1,
-            "name": ("@" + r["username"]) if r["username"] else (r["first_name"] or "Игрок"),
-            "score": r["best_score"]
-        } for i, r in enumerate(rows)]
-    })
+        rows=c.execute("SELECT username,first_name,best_score FROM players WHERE games>0 "
+                       "ORDER BY best_score DESC, games ASC, user_id ASC LIMIT 10").fetchall()
+    return web.json_response({"leaders":[{"rank":i+1,
+        "name":("@"+r["username"]) if r["username"] else (r["first_name"] or "Игрок"),
+        "score":r["best_score"]} for i,r in enumerate(rows)]})
